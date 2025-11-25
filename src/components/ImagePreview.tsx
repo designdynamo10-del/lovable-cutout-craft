@@ -1,8 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Download, RefreshCw, ZoomIn, ZoomOut } from "lucide-react";
+import { Download, RefreshCw, ZoomIn, ZoomOut, Save, Loader2 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import BackgroundEditor, { BackgroundConfig } from "./BackgroundEditor";
 import { compositeWithBackground, downloadImage } from "@/lib/imageCompositor";
+import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 
 interface ImagePreviewProps {
   originalImage: string;
@@ -24,8 +28,13 @@ const ImagePreview = ({
   const [background, setBackground] = useState<BackgroundConfig>({ type: "transparent", value: "" });
   const [finalImage, setFinalImage] = useState<string | null>(null);
   const [isCompositing, setIsCompositing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+  
+  const { user } = useAuth();
+  const { toast } = useToast();
 
   // Composite image when background changes
   useEffect(() => {
@@ -36,6 +45,7 @@ const ImagePreview = ({
       try {
         const result = await compositeWithBackground(processedImage, background);
         setFinalImage(result);
+        setIsSaved(false); // Reset saved state when background changes
       } catch (error) {
         console.error("Error compositing image:", error);
       } finally {
@@ -83,6 +93,72 @@ const ImagePreview = ({
     downloadImage(imageToDownload, filename);
   }, [finalImage, processedImage, background.type]);
 
+  const handleSave = useCallback(async () => {
+    if (!user || !processedImage) return;
+    
+    setIsSaving(true);
+    try {
+      const imageToSave = finalImage || processedImage;
+      const timestamp = Date.now();
+      
+      // Upload original image to storage
+      const originalBlob = await fetch(originalImage).then(r => r.blob());
+      const originalPath = `${user.id}/${timestamp}-original.png`;
+      const { error: originalUploadError } = await supabase.storage
+        .from("user-images")
+        .upload(originalPath, originalBlob);
+      
+      if (originalUploadError) throw originalUploadError;
+      
+      // Upload processed image to storage
+      const processedBlob = await fetch(imageToSave).then(r => r.blob());
+      const processedPath = `${user.id}/${timestamp}-processed.png`;
+      const { error: processedUploadError } = await supabase.storage
+        .from("user-images")
+        .upload(processedPath, processedBlob);
+      
+      if (processedUploadError) throw processedUploadError;
+      
+      // Get public URLs
+      const { data: { publicUrl: originalUrl } } = supabase.storage
+        .from("user-images")
+        .getPublicUrl(originalPath);
+      
+      const { data: { publicUrl: processedUrl } } = supabase.storage
+        .from("user-images")
+        .getPublicUrl(processedPath);
+      
+      // Save to database
+      const { error: dbError } = await supabase
+        .from("saved_images")
+        .insert({
+          user_id: user.id,
+          original_url: originalUrl,
+          processed_url: processedUrl,
+          background_type: background.type,
+          background_value: background.type !== "transparent" ? background.value : null,
+          title: `Image ${new Date().toLocaleDateString()}`,
+        });
+      
+      if (dbError) throw dbError;
+      
+      setIsSaved(true);
+      toast({
+        title: "Image saved!",
+        description: "Your image has been saved to your collection.",
+      });
+    } catch (error) {
+      console.error("Error saving image:", error);
+      toast({
+        title: "Save failed",
+        description: "There was an error saving your image. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }, [user, originalImage, processedImage, finalImage, background, toast]);
+
   const getBackgroundStyle = () => {
     if (background.type === "transparent") {
       return {
@@ -111,13 +187,6 @@ const ImagePreview = ({
     }
     return {};
   };
-
-  const transparentBg = `
-    linear-gradient(45deg, hsl(var(--muted)) 25%, transparent 25%),
-    linear-gradient(-45deg, hsl(var(--muted)) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, hsl(var(--muted)) 75%),
-    linear-gradient(-45deg, transparent 75%, hsl(var(--muted)) 75%)
-  `;
 
   return (
     <div className="space-y-6">
@@ -269,11 +338,46 @@ const ImagePreview = ({
             <RefreshCw className="w-4 h-4 mr-2" />
             New Image
           </Button>
+          
           {processedImage && (
-            <Button variant="gradient" onClick={handleDownload} disabled={isCompositing}>
-              <Download className="w-4 h-4 mr-2" />
-              Download PNG
-            </Button>
+            <>
+              {user ? (
+                <Button 
+                  variant="outline" 
+                  onClick={handleSave} 
+                  disabled={isSaving || isSaved || isCompositing}
+                >
+                  {isSaving ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : isSaved ? (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Saved
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4 mr-2" />
+                      Save
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <Link to="/auth">
+                  <Button variant="outline">
+                    <Save className="w-4 h-4 mr-2" />
+                    Sign in to Save
+                  </Button>
+                </Link>
+              )}
+              
+              <Button variant="gradient" onClick={handleDownload} disabled={isCompositing}>
+                <Download className="w-4 h-4 mr-2" />
+                Download PNG
+              </Button>
+            </>
           )}
         </div>
       </div>
