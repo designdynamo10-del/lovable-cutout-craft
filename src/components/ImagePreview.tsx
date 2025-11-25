@@ -7,6 +7,7 @@ interface ImagePreviewProps {
   processedImage: string | null;
   onReset: () => void;
   progress: number;
+  stage?: string;
 }
 
 const ImagePreview = ({
@@ -14,6 +15,7 @@ const ImagePreview = ({
   processedImage,
   onReset,
   progress,
+  stage = "Processing...",
 }: ImagePreviewProps) => {
   const [sliderPosition, setSliderPosition] = useState(50);
   const [zoom, setZoom] = useState(1);
@@ -107,18 +109,45 @@ const ImagePreview = ({
 
         {/* Loading overlay */}
         {!processedImage && progress > 0 && (
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex flex-col items-center justify-center">
-            <div className="w-48 h-2 bg-secondary rounded-full overflow-hidden mb-4">
-              <div
-                className="h-full gradient-bg transition-all duration-300"
-                style={{ width: `${progress}%` }}
-              />
+          <div className="absolute inset-0 bg-background/90 backdrop-blur-sm flex flex-col items-center justify-center">
+            <div className="glass-card rounded-2xl p-6 flex flex-col items-center">
+              {/* Animated progress ring */}
+              <div className="relative w-20 h-20 mb-4">
+                <svg className="w-20 h-20 transform -rotate-90">
+                  <circle
+                    cx="40"
+                    cy="40"
+                    r="36"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    fill="none"
+                    className="text-muted"
+                  />
+                  <circle
+                    cx="40"
+                    cy="40"
+                    r="36"
+                    stroke="url(#gradient)"
+                    strokeWidth="4"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeDasharray={`${progress * 2.26} 226`}
+                    className="transition-all duration-300"
+                  />
+                  <defs>
+                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stopColor="hsl(var(--primary))" />
+                      <stop offset="100%" stopColor="hsl(var(--accent))" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-lg font-bold gradient-text">{progress}%</span>
+                </div>
+              </div>
+              <p className="text-sm font-medium text-foreground mb-1">{stage}</p>
+              <p className="text-xs text-muted-foreground">Please wait...</p>
             </div>
-            <p className="text-sm text-muted-foreground">
-              {progress < 30 && "Loading AI model..."}
-              {progress >= 30 && progress < 80 && "Processing image..."}
-              {progress >= 80 && "Finalizing..."}
-            </p>
           </div>
         )}
 
