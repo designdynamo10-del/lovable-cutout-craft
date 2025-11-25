@@ -1,14 +1,22 @@
 import { useState, useCallback } from "react";
-import { Upload, X, Loader2 } from "lucide-react";
+import { Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import LoadingProgress from "./LoadingProgress";
 
 interface ImageUploaderProps {
   onImageSelect: (file: File) => void;
   isProcessing: boolean;
+  progress?: number;
+  stage?: string;
 }
 
-const ImageUploader = ({ onImageSelect, isProcessing }: ImageUploaderProps) => {
+const ImageUploader = ({ 
+  onImageSelect, 
+  isProcessing, 
+  progress = 0,
+  stage = "Processing..."
+}: ImageUploaderProps) => {
   const [isDragging, setIsDragging] = useState(false);
   const { toast } = useToast();
 
@@ -81,13 +89,9 @@ const ImageUploader = ({ onImageSelect, isProcessing }: ImageUploaderProps) => {
         disabled={isProcessing}
       />
 
-      <div className="flex flex-col items-center justify-center py-12">
+      <div className="flex flex-col items-center justify-center py-8">
         {isProcessing ? (
-          <>
-            <Loader2 className="w-16 h-16 text-primary animate-spin mb-4" />
-            <p className="text-lg font-medium mb-2">Processing your image...</p>
-            <p className="text-sm text-muted-foreground">This may take a few seconds</p>
-          </>
+          <LoadingProgress progress={progress} stage={stage} />
         ) : (
           <>
             <div className="feature-icon w-16 h-16 mb-4">

@@ -7,11 +7,21 @@ import ImagePreview from "@/components/ImagePreview";
 import { removeBackground, loadImage } from "@/lib/backgroundRemoval";
 import { useToast } from "@/hooks/use-toast";
 
+const getStageMessage = (progress: number): string => {
+  if (progress < 10) return "Preparing image...";
+  if (progress < 30) return "Loading AI model (first time may take longer)...";
+  if (progress < 50) return "Model ready, processing image...";
+  if (progress < 80) return "Running background detection...";
+  if (progress < 95) return "Applying transparency mask...";
+  return "Finalizing...";
+};
+
 const RemoveBackground = () => {
   const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [processedImage, setProcessedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState("");
   const { toast } = useToast();
 
   const handleImageSelect = useCallback(
@@ -19,6 +29,7 @@ const RemoveBackground = () => {
       try {
         setIsProcessing(true);
         setProgress(0);
+        setStage(getStageMessage(0));
         setProcessedImage(null);
 
         // Create URL for original image preview
@@ -28,8 +39,12 @@ const RemoveBackground = () => {
         // Load and process image
         const img = await loadImage(file);
         setProgress(5);
+        setStage(getStageMessage(5));
 
-        const resultBlob = await removeBackground(img, (p) => setProgress(p));
+        const resultBlob = await removeBackground(img, (p) => {
+          setProgress(p);
+          setStage(getStageMessage(p));
+        });
         const resultUrl = URL.createObjectURL(resultBlob);
         setProcessedImage(resultUrl);
 
@@ -88,6 +103,8 @@ const RemoveBackground = () => {
                 <ImageUploader
                   onImageSelect={handleImageSelect}
                   isProcessing={isProcessing}
+                  progress={progress}
+                  stage={stage}
                 />
               ) : (
                 <ImagePreview
@@ -95,6 +112,7 @@ const RemoveBackground = () => {
                   processedImage={processedImage}
                   onReset={handleReset}
                   progress={progress}
+                  stage={stage}
                 />
               )}
 
