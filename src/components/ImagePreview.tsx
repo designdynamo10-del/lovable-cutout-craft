@@ -1,6 +1,8 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { Download, RefreshCw, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import BackgroundEditor, { BackgroundConfig } from "./BackgroundEditor";
+import { compositeWithBackground, downloadImage } from "@/lib/imageCompositor";
 
 interface ImagePreviewProps {
   originalImage: string;
@@ -19,8 +21,30 @@ const ImagePreview = ({
 }: ImagePreviewProps) => {
   const [sliderPosition, setSliderPosition] = useState(50);
   const [zoom, setZoom] = useState(1);
+  const [background, setBackground] = useState<BackgroundConfig>({ type: "transparent", value: "" });
+  const [finalImage, setFinalImage] = useState<string | null>(null);
+  const [isCompositing, setIsCompositing] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
+
+  // Composite image when background changes
+  useEffect(() => {
+    if (!processedImage) return;
+    
+    const composite = async () => {
+      setIsCompositing(true);
+      try {
+        const result = await compositeWithBackground(processedImage, background);
+        setFinalImage(result);
+      } catch (error) {
+        console.error("Error compositing image:", error);
+      } finally {
+        setIsCompositing(false);
+      }
+    };
+    
+    composite();
+  }, [processedImage, background]);
 
   const handleMouseDown = () => {
     isDragging.current = true;
@@ -48,15 +72,44 @@ const ImagePreview = ({
     setSliderPosition(Math.max(0, Math.min(100, percentage)));
   };
 
-  const handleDownload = () => {
-    if (!processedImage) return;
+  const handleDownload = useCallback(() => {
+    const imageToDownload = finalImage || processedImage;
+    if (!imageToDownload) return;
     
-    const link = document.createElement("a");
-    link.href = processedImage;
-    link.download = "background-removed.png";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const filename = background.type === "transparent" 
+      ? "background-removed.png" 
+      : `background-${background.type}.png`;
+    
+    downloadImage(imageToDownload, filename);
+  }, [finalImage, processedImage, background.type]);
+
+  const getBackgroundStyle = () => {
+    if (background.type === "transparent") {
+      return {
+        backgroundImage: `
+          linear-gradient(45deg, hsl(var(--muted)) 25%, transparent 25%),
+          linear-gradient(-45deg, hsl(var(--muted)) 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, hsl(var(--muted)) 75%),
+          linear-gradient(-45deg, transparent 75%, hsl(var(--muted)) 75%)
+        `,
+        backgroundSize: "20px 20px",
+        backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
+      };
+    }
+    if (background.type === "solid") {
+      return { backgroundColor: background.value };
+    }
+    if (background.type === "gradient") {
+      return { backgroundImage: background.value };
+    }
+    if (background.type === "image") {
+      return {
+        backgroundImage: `url(${background.value})`,
+        backgroundSize: "cover",
+        backgroundPosition: "center",
+      };
+    }
+    return {};
   };
 
   const transparentBg = `
@@ -88,19 +141,17 @@ const ImagePreview = ({
           />
         </div>
 
-        {/* Processed image (foreground with clip) */}
+        {/* Processed image with custom background (foreground with clip) */}
         {processedImage && (
           <div
             className="absolute inset-0"
             style={{
               clipPath: `inset(0 ${100 - sliderPosition}% 0 0)`,
-              backgroundImage: transparentBg,
-              backgroundSize: "20px 20px",
-              backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
+              ...getBackgroundStyle(),
             }}
           >
             <img
-              src={processedImage}
+              src={background.type === "transparent" ? processedImage : (finalImage || processedImage)}
               alt="Processed"
               className="w-full h-full object-contain"
             />
@@ -151,6 +202,15 @@ const ImagePreview = ({
           </div>
         )}
 
+        {/* Compositing overlay */}
+        {isCompositing && (
+          <div className="absolute inset-0 bg-background/50 backdrop-blur-sm flex items-center justify-center">
+            <div className="glass-card rounded-xl px-4 py-2">
+              <p className="text-sm text-muted-foreground">Applying background...</p>
+            </div>
+          </div>
+        )}
+
         {/* Slider handle */}
         {processedImage && (
           <div
@@ -169,10 +229,18 @@ const ImagePreview = ({
         </div>
         {processedImage && (
           <div className="absolute bottom-4 right-4 glass-card rounded-full px-3 py-1 text-xs font-medium">
-            No Background
+            {background.type === "transparent" ? "No Background" : "New Background"}
           </div>
         )}
       </div>
+
+      {/* Background Editor */}
+      {processedImage && (
+        <BackgroundEditor
+          currentBackground={background}
+          onBackgroundChange={setBackground}
+        />
+      )}
 
       {/* Controls */}
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -202,7 +270,7 @@ const ImagePreview = ({
             New Image
           </Button>
           {processedImage && (
-            <Button variant="gradient" onClick={handleDownload}>
+            <Button variant="gradient" onClick={handleDownload} disabled={isCompositing}>
               <Download className="w-4 h-4 mr-2" />
               Download PNG
             </Button>
