@@ -1,59 +1,32 @@
-import { pipeline, env } from '@huggingface/transformers';
+import { AutoModel, AutoProcessor, RawImage, env } from '@huggingface/transformers';
 
-// Configure transformers.js to always download models
+// Configure transformers.js
 env.allowLocalModels = false;
 env.useBrowserCache = true;
 
 const MAX_IMAGE_DIMENSION = 1024;
 
-function resizeImageIfNeeded(
-  canvas: HTMLCanvasElement,
-  ctx: CanvasRenderingContext2D,
-  image: HTMLImageElement
-) {
-  let width = image.naturalWidth;
-  let height = image.naturalHeight;
+let modelPromise: Promise<any> | null = null;
+let processorPromise: Promise<any> | null = null;
 
-  if (width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
-    if (width > height) {
-      height = Math.round((height * MAX_IMAGE_DIMENSION) / width);
-      width = MAX_IMAGE_DIMENSION;
-    } else {
-      width = Math.round((width * MAX_IMAGE_DIMENSION) / height);
-      height = MAX_IMAGE_DIMENSION;
-    }
-
-    canvas.width = width;
-    canvas.height = height;
-    ctx.drawImage(image, 0, 0, width, height);
-    return true;
-  }
-
-  canvas.width = width;
-  canvas.height = height;
-  ctx.drawImage(image, 0, 0);
-  return false;
-}
-
-let segmenterPromise: Promise<any> | null = null;
-
-async function getSegmenter() {
-  if (!segmenterPromise) {
-    segmenterPromise = pipeline(
-      'image-segmentation',
-      'Xenova/segformer-b0-finetuned-ade-512-512',
-      { device: 'webgpu' }
-    ).catch((error) => {
-      // If WebGPU fails, fallback to WASM
+async function getModel() {
+  if (!modelPromise) {
+    modelPromise = AutoModel.from_pretrained('briaai/RMBG-1.4', {
+      device: 'webgpu',
+    }).catch(() => {
       console.log('WebGPU not available, falling back to WASM');
-      segmenterPromise = null;
-      return pipeline(
-        'image-segmentation',
-        'Xenova/segformer-b0-finetuned-ade-512-512'
-      );
+      modelPromise = null;
+      return AutoModel.from_pretrained('briaai/RMBG-1.4');
     });
   }
-  return segmenterPromise;
+  return modelPromise;
+}
+
+async function getProcessor() {
+  if (!processorPromise) {
+    processorPromise = AutoProcessor.from_pretrained('briaai/RMBG-1.4');
+  }
+  return processorPromise;
 }
 
 export const removeBackground = async (
@@ -61,77 +34,80 @@ export const removeBackground = async (
   onProgress?: (progress: number) => void
 ): Promise<Blob> => {
   try {
-    onProgress?.(10);
+    onProgress?.(5);
     console.log('Starting background removal process...');
-    
-    const segmenter = await getSegmenter();
+
+    // Load model and processor
+    onProgress?.(10);
+    const [model, processor] = await Promise.all([getModel(), getProcessor()]);
     onProgress?.(30);
 
-    // Convert HTMLImageElement to canvas
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-
-    if (!ctx) throw new Error('Could not get canvas context');
-
-    // Resize image if needed and draw it to canvas
-    const wasResized = resizeImageIfNeeded(canvas, ctx, imageElement);
-    console.log(
-      `Image ${wasResized ? 'was' : 'was not'} resized. Final dimensions: ${canvas.width}x${canvas.height}`
-    );
-
-    // Get image data as base64
-    const imageData = canvas.toDataURL('image/jpeg', 0.8);
-    console.log('Image converted to base64');
+    // Load image using RawImage
+    const image = await RawImage.fromURL(imageElement.src);
     onProgress?.(40);
 
-    // Process the image with the segmentation model
-    console.log('Processing with segmentation model...');
-    const result = await segmenter(imageData);
-    onProgress?.(80);
-
-    console.log('Segmentation result:', result);
-
-    if (!result || !Array.isArray(result) || result.length === 0 || !result[0].mask) {
-      throw new Error('Invalid segmentation result');
+    // Resize if needed
+    let processedImage = image;
+    if (image.width > MAX_IMAGE_DIMENSION || image.height > MAX_IMAGE_DIMENSION) {
+      const scale = MAX_IMAGE_DIMENSION / Math.max(image.width, image.height);
+      const newWidth = Math.round(image.width * scale);
+      const newHeight = Math.round(image.height * scale);
+      processedImage = await image.resize(newWidth, newHeight);
+      console.log(`Image resized to ${newWidth}x${newHeight}`);
     }
 
-    // Create a new canvas for the masked image
-    const outputCanvas = document.createElement('canvas');
-    outputCanvas.width = canvas.width;
-    outputCanvas.height = canvas.height;
-    const outputCtx = outputCanvas.getContext('2d');
+    // Process the image
+    onProgress?.(50);
+    console.log('Processing with background removal model...');
+    const { pixel_values } = await processor(processedImage);
+    
+    onProgress?.(60);
+    const { output } = await model({ input: pixel_values });
+    
+    onProgress?.(80);
+    
+    // Post-process the mask
+    const maskData = output[0][0].data;
+    const maskWidth = output[0][0].dims[1];
+    const maskHeight = output[0][0].dims[0];
 
-    if (!outputCtx) throw new Error('Could not get output canvas context');
+    // Create canvas for output
+    const canvas = document.createElement('canvas');
+    canvas.width = processedImage.width;
+    canvas.height = processedImage.height;
+    const ctx = canvas.getContext('2d')!;
 
     // Draw original image
-    outputCtx.drawImage(canvas, 0, 0);
+    ctx.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
 
-    // Apply the mask
-    const outputImageData = outputCtx.getImageData(
-      0,
-      0,
-      outputCanvas.width,
-      outputCanvas.height
-    );
-    const data = outputImageData.data;
+    // Get image data
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
 
-    // Apply inverted mask to alpha channel
-    for (let i = 0; i < result[0].mask.data.length; i++) {
-      // Invert the mask value (1 - value) to keep the subject instead of the background
-      const alpha = Math.round((1 - result[0].mask.data[i]) * 255);
-      data[i * 4 + 3] = alpha;
+    // Resize mask to match image dimensions if needed
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        // Map coordinates to mask
+        const maskX = Math.floor((x / canvas.width) * maskWidth);
+        const maskY = Math.floor((y / canvas.height) * maskHeight);
+        const maskIndex = maskY * maskWidth + maskX;
+        
+        // Get mask value and apply to alpha
+        const maskValue = maskData[maskIndex];
+        const pixelIndex = (y * canvas.width + x) * 4;
+        data[pixelIndex + 3] = Math.round(maskValue * 255);
+      }
     }
 
-    outputCtx.putImageData(outputImageData, 0, 0);
-    console.log('Mask applied successfully');
+    ctx.putImageData(imageData, 0, 0);
     onProgress?.(95);
 
-    // Convert canvas to blob
+    // Convert to blob
     return new Promise((resolve, reject) => {
-      outputCanvas.toBlob(
+      canvas.toBlob(
         (blob) => {
           if (blob) {
-            console.log('Successfully created final blob');
+            console.log('Background removed successfully');
             onProgress?.(100);
             resolve(blob);
           } else {
@@ -151,9 +127,9 @@ export const removeBackground = async (
 export const loadImage = (file: Blob): Promise<HTMLImageElement> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = URL.createObjectURL(file);
   });
 };
-
