@@ -1,13 +1,35 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { Helmet } from "react-helmet";
+import Navbar from "@/components/Navbar";
+import Hero from "@/components/Hero";
+import Features from "@/components/Features";
+import HowItWorks from "@/components/HowItWorks";
+import UseCases from "@/components/UseCases";
+import Footer from "@/components/Footer";
 
 const Index = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
+    <>
+      <Helmet>
+        <title>BgRemover - Remove Background from Images in 1 Click | Free AI Tool</title>
+        <meta
+          name="description"
+          content="Remove background from any image instantly with AI. Free, fast, and works entirely in your browser. No sign-up required. Perfect for e-commerce, profile photos, and marketing."
+        />
+        <meta name="keywords" content="remove background, background remover, AI image editing, transparent background, free tool" />
+        <link rel="canonical" href="https://bgremover.app" />
+      </Helmet>
+
+      <div className="min-h-screen">
+        <Navbar />
+        <main>
+          <Hero />
+          <Features />
+          <HowItWorks />
+          <UseCases />
+        </main>
+        <Footer />
       </div>
-    </div>
+    </>
   );
 };
 
